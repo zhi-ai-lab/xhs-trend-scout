@@ -74,25 +74,165 @@ function compact(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-async function closeLoginPopup(page) {
+async function dismissLoginOverlay(page) {
   const selectors = [
     'button[aria-label="关闭"]',
-    '[role="dialog"] button:has-text("关闭")',
+    'button[aria-label*="close" i]',
+    '[title="关闭"]',
+    '[title*="close" i]',
+    '[role="dialog"] [class*="close"]',
     '[class*="login"] [class*="close"]',
     '[class*="modal"] [class*="close"]',
+    '[class*="dialog"] [class*="close"]',
+    '[class*="login"] button:has-text("×")',
+    '[class*="modal"] button:has-text("×")',
+    '[role="dialog"] button:has-text("×")',
   ];
 
-  for (const selector of selectors) {
-    try {
-      const candidate = page.locator(selector).first();
-      if (await candidate.isVisible({ timeout: 500 })) {
-        await candidate.click({ timeout: 1000 });
-        return;
+  // A dismissible login modal sometimes responds to Escape before its close
+  // control becomes queryable.
+  try {
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+  } catch {
+    // Best effort only.
+  }
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    let clicked = false;
+
+    for (const selector of selectors) {
+      try {
+        const candidates = page.locator(selector);
+        const count = Math.min(await candidates.count(), 8);
+
+        for (let i = 0; i < count; i += 1) {
+          const candidate = candidates.nth(i);
+          if (await candidate.isVisible({ timeout: 250 })) {
+            await candidate.click({ timeout: 1000 });
+            clicked = true;
+            await page.waitForTimeout(500);
+            break;
+          }
+        }
+
+        if (clicked) break;
+      } catch {
+        // Continue through alternative close controls.
       }
+    }
+
+    if (!clicked) {
+      // Fallback for XHS login dialogs whose close control is an icon-only
+      // element. Only click elements that live inside a visible login/modal
+      // container and look explicitly like a close affordance.
+      clicked = await page.evaluate(() => {
+        const visible = (el) => {
+          const r = el.getBoundingClientRect();
+          const style = getComputedStyle(el);
+          return (
+            r.width > 0 &&
+            r.height > 0 &&
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            Number(style.opacity || "1") > 0
+          );
+        };
+
+        const containers = Array.from(
+          document.querySelectorAll(
+            '[role="dialog"], [class*="login"], [class*="modal"], [class*="dialog"]'
+          )
+        ).filter(visible);
+
+        for (const container of containers) {
+          const text = (container.textContent || "").replace(/\s+/g, "");
+          if (!/登录|扫码|手机号|验证码|login/i.test(text)) continue;
+
+          const nodes = Array.from(
+            container.querySelectorAll(
+              'button, [role="button"], a, [class*="close"], [aria-label], [title], svg'
+            )
+          ).filter(visible);
+
+          for (const node of nodes) {
+            const label = [
+              node.getAttribute?.("aria-label"),
+              node.getAttribute?.("title"),
+              node.getAttribute?.("class"),
+              node.textContent,
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .trim();
+
+            if (/关闭|close|(^|\s)[×✕✖x](\s|$)/i.test(label)) {
+              const target = node.closest("button, [role='button'], a") || node;
+              target.dispatchEvent(
+                new MouseEvent("click", {
+                  bubbles: true,
+                  cancelable: true,
+                  view: window,
+                })
+              );
+              return true;
+            }
+          }
+        }
+
+        return false;
+      }).catch(() => false);
+
+      if (clicked) await page.waitForTimeout(500);
+    }
+
+    const feedVisible = await page
+      .locator(
+        'a[href*="/explore/"], a[href*="/discovery/item/"], .note-item, [class*="note-item"]'
+      )
+      .first()
+      .isVisible({ timeout: 1000 })
+      .catch(() => false);
+
+    if (feedVisible) return true;
+
+    try {
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(350);
     } catch {
       // Best effort only.
     }
   }
+
+  return false;
+}
+
+async function waitForExploreFeed(page) {
+  await dismissLoginOverlay(page);
+
+  const feed = page.locator(
+    'a[href*="/explore/"], a[href*="/discovery/item/"], .note-item, [class*="note-item"]'
+  );
+
+  try {
+    await feed.first().waitFor({ state: "visible", timeout: 10000 });
+    return;
+  } catch {
+    // Inspect the page before deciding whether this is a verification block or
+    // simply a markup/extraction problem.
+  }
+
+  const bodyText = await page.locator("body").innerText().catch(() => "");
+
+  if (
+    /安全验证|人机验证|滑块验证|请完成验证|访问异常|操作频繁|captcha/i.test(
+      bodyText
+    )
+  ) {
+    throw new Error("XHS_VERIFICATION_BLOCKED");
+  }
+
+  throw new Error("XHS_FEED_NOT_VISIBLE_AFTER_DISMISS");
 }
 
 async function extractCards(page) {
@@ -331,12 +471,17 @@ async function main() {
       timeout: 60000,
     });
 
-    await page.waitForTimeout(5000);
-    await closeLoginPopup(page);
+    await page.waitForTimeout(3500);
+    await waitForExploreFeed(page);
+
+    // Login overlays can reappear after the first interaction. Dismiss again
+    // before and during scrolling.
+    await dismissLoginOverlay(page);
 
     for (let i = 0; i < 4; i += 1) {
       await page.mouse.wheel(0, 1000);
       await page.waitForTimeout(1200);
+      await dismissLoginOverlay(page);
     }
 
     const rawCards = await extractCards(page);
@@ -381,8 +526,23 @@ async function main() {
     console.log(`Cards with numeric visible likes: ${numericCards.length}`);
 
     if (!top5.length) {
+      if (rawCards.length > 0) {
+        throw new Error(
+          "XHS_SELECTOR_MISMATCH: Explore cards are visible but no numeric likes were extracted."
+        );
+      }
+
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      if (
+        /安全验证|人机验证|滑块验证|请完成验证|访问异常|操作频繁|captcha/i.test(
+          bodyText
+        )
+      ) {
+        throw new Error("XHS_VERIFICATION_BLOCKED");
+      }
+
       throw new Error(
-        "No cards with numeric visible likes were extracted. Inspect the debug artifact."
+        "XHS_NO_CARDS: No Explore cards were extracted after dismissing login overlays."
       );
     }
 
