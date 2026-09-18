@@ -39,5 +39,3 @@ Do not commit the JSON credential to this repository.
 Open **Actions → XHS Trend Scout → Run workflow**.
 
 The result represents the visible feed returned to this browser session, not an official Xiaohongshu platform-wide ranking.
-
-<!-- temporary verification trigger -->
