@@ -1,0 +1,4 @@
+workflow=XHS Trend Scout
+commit=4953ff4ffe78c2365da0450b549519eff8e73df3
+scan_outcome=failure
+recorded_at_utc=2026-09-18T00:19:03Z
