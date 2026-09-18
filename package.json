@@ -1,0 +1,13 @@
+{
+  "name": "xhs-trend-scout",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scan": "node src/scan.mjs"
+  },
+  "dependencies": {
+    "googleapis": "^144.0.0",
+    "playwright": "^1.55.0"
+  }
+}
