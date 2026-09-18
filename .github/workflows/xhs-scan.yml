@@ -1,16 +1,12 @@
 name: XHS Trend Scout
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "verification/**"
   schedule:
     - cron: "0 */2 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: xhs-trend-scout
@@ -37,56 +33,10 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Scan XHS Explore and upload sample
-        id: scan
-        continue-on-error: true
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_DRIVE_DETAILS_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_DETAILS_FOLDER_ID }}
-        run: |
-          set +e
-          npm run scan > /tmp/xhs-scan.log 2>&1
-          status=$?
-          reason="success"
-          if [ "$status" -ne 0 ]; then
-            if grep -q "GOOGLE_DRIVE_DETAILS_FOLDER_ID is not configured" /tmp/xhs-scan.log; then
-              reason="missing_folder_secret"
-            elif grep -q "GOOGLE_SERVICE_ACCOUNT_JSON is not configured" /tmp/xhs-scan.log; then
-              reason="missing_service_account_secret"
-            elif grep -q "GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON" /tmp/xhs-scan.log; then
-              reason="invalid_service_account_json"
-            elif grep -q "No cards with numeric visible likes" /tmp/xhs-scan.log; then
-              reason="xhs_no_numeric_like_cards"
-            elif grep -Eqi "storageQuota|storage quota|Service Accounts do not have storage quota" /tmp/xhs-scan.log; then
-              reason="drive_storage_quota"
-            elif grep -Eqi "insufficientFilePermissions|permission denied|insufficient permissions|forbidden" /tmp/xhs-scan.log; then
-              reason="drive_permission"
-            elif grep -Eqi "File not found|notFound|404" /tmp/xhs-scan.log; then
-              reason="drive_folder_not_visible"
-            elif grep -Eqi "timeout|Timeout" /tmp/xhs-scan.log; then
-              reason="browser_or_page_timeout"
-            else
-              reason="other_scan_error"
-            fi
-          fi
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
-          exit "$status"
-
-      - name: Record verification result
-        if: always()
-        run: |
-          mkdir -p verification
-          {
-            echo "workflow=XHS Trend Scout"
-            echo "commit=$GITHUB_SHA"
-            echo "scan_outcome=${{ steps.scan.outcome }}"
-            echo "failure_reason=${{ steps.scan.outputs.reason }}"
-            echo "recorded_at_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          } > verification/last-run.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add verification/last-run.txt
-          git commit -m "Record XHS verification result" || true
-          git push
+        run: npm run scan
 
       - name: Upload debug artifact
         if: always()
@@ -96,7 +46,3 @@ jobs:
           path: out/
           if-no-files-found: warn
           retention-days: 7
-
-      - name: Fail workflow if scan failed
-        if: steps.scan.outcome != 'success'
-        run: exit 1
