@@ -28,7 +28,9 @@ The GitHub Actions run also stores the generated Markdown, a screenshot, and pag
 
 `GOOGLE_SERVICE_ACCOUNT_JSON`
 
-The service-account email in that JSON must have write access to the shared Google Drive folders.
+`GOOGLE_DRIVE_DETAILS_FOLDER_ID`
+
+The service-account email in the JSON must have write access to the shared Google Drive folders. The folder ID itself is injected only through GitHub Actions Secrets and is not stored in this public repository.
 
 Do not commit the JSON credential to this repository.
 
