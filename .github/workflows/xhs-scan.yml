@@ -1,12 +1,16 @@
 name: XHS Trend Scout
 
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "verification/**"
   schedule:
     - cron: "0 */2 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: xhs-trend-scout
@@ -33,10 +37,28 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Scan XHS Explore and upload sample
+        id: scan
+        continue-on-error: true
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_DRIVE_DETAILS_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_DETAILS_FOLDER_ID }}
         run: npm run scan
+
+      - name: Record verification result
+        if: always()
+        run: |
+          mkdir -p verification
+          {
+            echo "workflow=XHS Trend Scout"
+            echo "commit=$GITHUB_SHA"
+            echo "scan_outcome=${{ steps.scan.outcome }}"
+            echo "recorded_at_utc=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          } > verification/last-run.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add verification/last-run.txt
+          git commit -m "Record XHS verification result" || true
+          git push
 
       - name: Upload debug artifact
         if: always()
@@ -46,3 +68,7 @@ jobs:
           path: out/
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Fail workflow if scan failed
+        if: steps.scan.outcome != 'success'
+        run: exit 1
