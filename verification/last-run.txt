@@ -1,5 +1,0 @@
-workflow=XHS Trend Scout
-commit=2a711e3a86f6767b3f1102a930344e5952eb0b8d
-scan_outcome=failure
-failure_reason=xhs_no_numeric_like_cards
-recorded_at_utc=2026-09-18T00:20:23Z
